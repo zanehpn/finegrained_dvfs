@@ -1,0 +1,61 @@
+--- scripts/qwen_first_order_v1.py	2026-11-06 17:04:15.816238688 +0800
++++ ATT2/scripts/qwen_first_order_v1.py	2026-11-07 00:56:42.348856746 +0800
+@@ -159,7 +159,19 @@
+ LIVE = None  # causal controller: called at each op's dispatch with what is known at that time, returns the op's point
+ 
+ 
++ATT_N = float(_os.environ.get('ATT_N', 2))  # attention units per core: heads run in parallel, so attention time falls by N and its dynamic energy does not
++
++
++def apply_att():
++    for o in OPS:
++        if o.get('family') == 'attention' and '_an' not in o:
++            for f, v in list(o.items()):
++                if f[0] == 'C' and isinstance(v, (int, float)): o[f] = v/ATT_N
++            o['_an'] = ATT_N
++
++
+ def run(k, assign, supply, coarse, cfield='C_true', bfield='B_true'):
++    apply_att()
+     eta = L.SUPPLY[supply]; end, free, last = dict(ARRIVAL_END), collections.defaultdict(float), {}
+     busy = collections.defaultdict(list); rho_t = collections.defaultdict(float); emit = {}
+     # Shared HBM: P and D engines each run their ops in program order; the HBM transfer of
+@@ -233,7 +245,7 @@
+         pi = assign.get(i, 0)
+         if o['unit'] == 'MATRIX': mac += S.mac_in/S.macs_total*o['macs']*o.get('mac_e', 1.)*r[pi]
+         elif o['unit'] == 'VU': vu += J.vu_in/J.vu_C*o['C']*r[pi]
+-        elif o['unit'] == 'ATT': at += J.att_in/J.att_C*o['C']*r[pi]
++        elif o['unit'] == 'ATT': at += J.att_in/J.att_C*o['C']*o.get('_an', 1.)*r[pi]
+     e.update(matrix_core=mac, vu=vu, att=at)
+     pw = J.RET_W_PER_ENGINE*k**alpha*1e-12; idle = pgsave = 0.; ret = 0.
+     for eng in ('P', 'D'):
+@@ -256,7 +268,7 @@
+     """Upper bound on rail recharge energy: every upward step costs C_rail*V*dV/eta and downward steps recover nothing.
+     C_rail = TRANS_DECAP * switched capacitance of the domain, from its nominal dynamic power; MEM logic follows the MATRIX rail's steps."""
+     eta = L.SUPPLY[supply]; E = {'MATRIX': S.mac_in/S.macs_total*sum(o['macs']*o.get('mac_e', 1.) for o in OPS if o['unit'] == 'MATRIX'),
+-                                 'VU': J.vu_in/J.vu_C*sum(o['C'] for o in OPS if o['unit'] == 'VU'), 'ATT': J.att_in/J.att_C*sum(o['C'] for o in OPS if o['unit'] == 'ATT')}
++                                 'VU': J.vu_in/J.vu_C*sum(o['C'] for o in OPS if o['unit'] == 'VU'), 'ATT': J.att_in/J.att_C*sum(o['C']*o.get('_an', 1.) for o in OPS if o['unit'] == 'ATT')}
+     T = {u: sum(o['C_true'] for o in OPS if o['unit'] == u)/k*1e-12 for u in E}
+     Csw = {u: E[u]/T[u]/(F_NOM*.49) for u in E if T[u] > 0}
+     Cmem = J.RET_W_PER_ENGINE*k**R.alpha_for(k)/(F_NOM*.49)
+--- scripts/online_planner_v1.py	2026-11-06 23:54:18.146874896 +0800
++++ ATT2/scripts/online_planner_v1.py	2026-11-07 00:56:42.355856802 +0800
+@@ -47,6 +47,7 @@
+ 
+ class Online:
+     def __init__(s, k, supply, bt, bd, floor, guard, bg, cf='C_true', bf='B_true', reserve=True, lag_q=None, hedge=False, warm=1, nom=None, open_loop=False, slo=None, own=None):
++        q.apply_att()
+         s.k, s.bt, s.bd, s.floor, s.g, s.bg, s.cf, s.bf, s.reserve = k, bt, bd, floor, guard, bg, cf, bf, reserve; s.bgv = bg; s.lag_q = lag_q; s.hist = []; s.hedge = hedge; s.warm = warm; s.nom = nom  # nom: op -> dispatch time on the nominal twin
+         s.tlow = {}; s.slo = slo; s.own = own; s.cur = None; s.tc = {}; s.Sc = {}; s.tj = {}; s.tok = {}  # slo: ttft and tpot per request, as given; own: this costing's nominal twin (rec: op -> dispatch, end: prefill ends)
+         s.open_loop = open_loop; s.olag = dict(P=0., D=0.); s.dt = {}  # open_loop: budget spent = sum of the costing's own step delays, for the attribution study only
+--- scripts/insight_planner_v1.py	2026-11-05 16:46:54.495610611 +0800
++++ ATT2/scripts/insight_planner_v1.py	2026-11-07 00:56:42.351856770 +0800
+@@ -47,7 +47,7 @@
+ def _dyn(o, k):
+     if o['unit'] == 'MATRIX': return q.S.mac_in/q.S.macs_total*o['macs']*o.get('mac_e', 1.)
+     if o['unit'] == 'VU': return q.J.vu_in/q.J.vu_C*o['C']
+-    if o['unit'] == 'ATT': return q.J.att_in/q.J.att_C*o['C']
++    if o['unit'] == 'ATT': return q.J.att_in/q.J.att_C*o['C']*o.get('_an', 1.)
+     return 0.
+ 
+ 

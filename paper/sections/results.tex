@@ -1,0 +1,88 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{Azure traces}
+\Cref{tab:real} gives the main result.
+\TBD{Text from results/real\_b: saving over NoDVFS and PG+CG per model and trace, misses against the limit, requests meeting the plain MLPerf TTFT at peak and under each costing, Interactive tier on Llama-3.1-8B, load trend.}
+PG+CG alone accounts for most of the saving over NoDVFS on these traces, since idle time between requests is large at low load, so we report both baselines and treat the DVFS points as \sys{}'s contribution.
+\TBD{Worst-case versus average versus per-block: state at equal miss counts; on Qwen2.5-14B early data the three are within a point and worst-case costing misses fewer objectives.}
+\TBD{Replay of one or two representative traces: agreement with the planning model.}
+
+\begin{table}[t]
+\centering
+\caption{Azure traces at the limit of \Cref{sec:method}, guard 0.9, TPOT absolute, first-order model. Saving over PG+CG (\%) of worst-case / average / per-block costing, and misses per 1000 requests of \sys{}. $^\dagger$Quality not measured.}
+\label{tab:real}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+ & & \multicolumn{2}{c}{$b=5\%$} & \multicolumn{2}{c}{$b=25\%$} \\
+Model & Trace & Saving & Miss & Saving & Miss \\
+\midrule
+Qwen2.5-14B & conv & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+ & code & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+Llama-3.1-8B & conv & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+ & code & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+BitMoD 8B & conv & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+ & code & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+Qwen2.5-32B$^\dagger$ & conv & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+ & code & \TBD{} & \TBD{} & \TBD{} & \TBD{} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Where the saving comes from}
+\textbf{Rails.}
+On three 2K-token requests, a closed workload that isolates slack, \sys{} saves 33.5\% and 40.2\% over NoDVFS at TTFT budgets of 5\% and 25\%, of which PG+CG accounts for 25.5 points, so DVFS adds 10.8\% and 19.7\% over PG+CG. A single rail switched per layer, planned offline, adds 1.1 and 1.7\%, and per phase 1.5 and 3.9\%.
+
+\textbf{Export-only VU.}
+We rerun nine workloads, three models at three prompt lengths, under the absolute objectives of the export-only design, with the kernels' measured slowdowns as the only change.
+A 4-entry write-back interface lengthens TTFT by 3.9--4.3\%, TPOT by 0.5--3.3\% and peak-V/$f$ energy by 0.4--1.8\%, and it spends slack DVFS would use: the mean saving falls from 10.7\%, 14.3\% and 18.0\% to 6.5\%, 10.7\% and 16.6\% at budgets of 5/5, 10/10 and 25/5, with no missed objective.
+Without local forwarding TTFT grows by 41--46\%, TPOT by 4.4--24\% and energy by 3.7--18\%, so most objectives cannot be met (41--50 of 54 missed).
+A write-back interface with 8 entries has no stall, so export-only's advantage over it is the 42\% interface area.
+
+\textbf{Granularity.}
+A block is as fine as V/$f$ usefully goes: splitting 780 blocks into sub-blocks changes the saving by $-$0.7 to $+$0.1 points and lengthens nominal TTFT by up to 0.55\%, since a switch costs a tile boundary and energy is convex in voltage.
+
+\textbf{What the precision map adds.}
+On the closed workload at budgets of 2--10\% \sys{} leads worst-case costing by 2.8--4.6 points and average costing by 0.3--0.5, and at 25\% by 0.9 and 0.0 as the budget stops binding.
+On decode batches the costings stay within 0.9 points.
+Across 84 closed workloads and 576 objectives, four model and datatype configurations by seven request types at three budgets, all three costings meet every objective; \sys{} saves 9.6--22.5\% over PG+CG and leads worst-case costing by 2.3 points on average, up to 6.8, and average costing by 0.2, up to 0.6, with feedback on 32 workloads against 74.
+Average costing is close because it ranks steps alike: on the main workload the rank correlation is 0.91--0.93, and at a fixed budget 96\% of the accepted steps are the same.
+Prefill precision matters less than block balance suggests because vector and attention time, which precision does not touch, set most of TTFT (\Cref{sec:motivation}).
+Three attempts to widen the lead did not: allocating precision by energy instead of bits at equal Fisher score adds at most 0.43 points (screened on Fisher score, quality not measured), since the quality constraint fixes the average width; pricing retained logic per operation and a separate memory budget did not help either.
+A bimodal P4/P8 allocation leads average costing by up to 1.5 points, but its perplexity is 6.61--6.63 against 6.11, so we report it only as a sensitivity.
+
+\textbf{Quality.}
+On MMLU and GSM8K the 5.5-bit Fisher plan reaches 80.0\% and 91.6\%, against 80.6\% and 93.2\% for FP16, 79.1\% and 90.8\% for uniform P5, and 74.2\% and 90.4\% for uniform P4; perplexity separates them (6.11, 5.88, 6.41) where these sample sizes do not.
+BitMoD~\cite{chen2025bitmod} serializes a weight into $\lceil b/2\rceil$ terms, so its 3/4/6/8-bit weights take the time of our P4/P4/P6/P8 tiles; allocated per 128-channel window with the same Fisher method at 4.0 bits it reaches a perplexity of 7.57, MMLU 69.4\% and GSM8K 82.4\% on Llama-3.1-8B (uniform 4-bit: 7.60, 67.8\%, 78.4\%).
+
+\subsection{Robustness}
+
+\begin{table}[t]
+\centering
+\caption{Saving over PG+CG (\%), worst-case / per-block costing, under variations of the closed main workload (first-order model).}
+\label{tab:robust}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & TTFT 5/5 & TTFT 10/10 & TTFT 25/5 \\
+\midrule
+Qwen2.5-14B, 3$\times$2K & 7.7 / 10.8 & 11.2 / 15.8 & 18.8 / 19.7 \\
+\quad switch time $\times$10 & 7.7 / 10.8 & 11.1 / 15.8 & 18.8 / 19.8 \\
+\quad efficiency $-$10 points & 4.5 / 6.5 & 7.0 / 9.4 & 12.9 / 13.8 \\
+\quad digital LDO only & 3.9 / 6.4 & 5.4 / 7.7 & 7.8 / 7.8 \\
+\quad $+$20\% below 0.6\,V & 3.8 / 6.1 & 6.1 / 8.1 & 11.5 / 12.8 \\
+\quad no 0.45\,V point & 7.4 / 10.6 & 10.7 / 15.4 & 17.5 / 18.1 \\
+\quad none below 0.6\,V & 2.2 / 4.1 & 3.0 / 4.1 & 4.1 / 4.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:robust} varies the regulator and the low-voltage points. A ten times slower transition changes every saving by at most 0.1 points, and a digital LDO without a switched-capacitor stage keeps 40--60\%.
+All points come from pre-layout STA at the typical corner (\Cref{sec:arch}), and a production design needs corner and voltage-margin analysis. At 0.525\,V and below the FP32 VU also exceeds the 320\,ps library slew limit, up to 497\,ps at 0.45\,V, so these points need gate sizing.
+With 20\% more delay and energy below 0.6\,V, \sys{} keeps 51--65\% of its saving, and dropping every point below 0.6\,V keeps 21--38\%.
+
+\textbf{Controller cost.}
+Hull tables take \TBD{13--15\,s} per workload in Python, and a decision 0.4--1.7\,ms.

@@ -1,0 +1,7 @@
+\begin{abstract}
+Mixed-precision weights change the load of an LLM accelerator's components unevenly: from P4 to P8 a prefill's HBM time grows by 94\%, its MAC time by 33\% and its vector time not at all, so precision decides which domain is the bottleneck and how far each can slow down.
+A single core-wide rail cannot follow this, and separate domains put synchronizers on the vector chains that precision does not shorten.
+We present \sys{}, a multi-domain mixed-precision LLM accelerator with four voltage rails per core, an export-only vector interface that keeps dependent results inside their domain, and a causal controller that reads the precision map and spends each request's slack as blocks are dispatched.
+On Azure production traces under latency targets taken from MLPerf Inference, with the quality-validated allocations of Qwen2.5-14B and Llama-3.1-8B, \sys{} saves \TBD{x--y\%} of energy over an accelerator at peak voltage and frequency and \TBD{x--y\%} over power and clock gating, missing \TBD{x\%} of the targets.
+Per-domain rails and the export-only interface carry most of this saving, while knowing the precision of each block adds \TBD{x} points over worst-case costing and about matches average costing.
+\end{abstract}

@@ -1,0 +1,40 @@
+\section{Evaluation Methodology}
+\label{sec:method}
+
+\subsection{Calibrated request replay}
+We evaluate complete requests on a request-level replay whose stage costs come from cycle-level simulations of the RTL in ASAP7~\cite{asap7}.
+A phased-SRAM simulator executes each stage with banked SRAM, the DMA engine and the domain clocks, and Verilator replays every simulated trace against the RTL of the array, the SRAM banks and the cross-domain bridges, which must match cycle for cycle and value for value.
+HBM3 service uses a 16-channel streaming table derived from Ramulator~2.0~\cite{luo2023ramulator2}, and the KV handoff uses a 32\,GB/s link with 100\,ns latency.
+The replay schedules every request's operator graph on the two cores with shared HBM and reports per-block time, domain activity and idle intervals.
+
+\subsection{Calibration and hold-out accuracy}
+Matrix stages are calibrated with five-tile RTL executions on slices of the Qwen2.5-14B weights at each tile's precision and on captured layer inputs; 720 executions cover all 1800 contexts of (precision, next-tile precision, point, rows, K, memory clock) for P4--P8. On held-out executions of another layer, the frozen tables predict command, prefetch and store-ready times within 1.94\% (mean 0.16\%).
+Vector, attention and FP16 head stages use 30 RTL anchors; 12 held-out executions stay within 2.96\% of the linear shape transfer, and cold DMA transfers within 0.27\%. Four held-out attention tile shapes of 4K-token contexts stay within 2.97\% in total time; a single component can err by more (up to 51\% on a small load term), so we report totals only.
+
+\textbf{Planning model.} A replay takes 6.5\,h on 16 workers, so the controller and the sweeps use a first-order request model with the same calibrated costs and HBM sharing. Beyond $\max(C,M)$ it has per-engine and per-family terms for overlap, fixed overhead, HBM contention and the reduced response of $C$ to a stretch, fitted to the nominal replay and one multi-domain plan and then frozen. On six held-out multi-domain plans, the three costings at 5\% and 25\% TTFT, the model predicts request latency within 2.3\% and makespan within 1.7\% of the replay, and budget use within 1.1 points of TTFT and 0.9 points of TPOT.
+
+\subsection{Workloads}
+\label{sec:workloads}
+\textbf{Azure traces (main).} We replay the \emph{conv} and \emph{code} Azure traces~\cite{splitwise:isca24} on one accelerator with 256 arrays per core: six windows of 32 requests evenly spaced through each trace, with prompts and output lengths as recorded and at most 4096 tokens per request, the calibrated range, which keeps 92\% of conv and 86\% of code. Arrival gaps keep their recorded shape and are dilated to prefill loads of 0.25, 0.5 and 0.8, and idle time between requests is charged.
+\textbf{Allocations.} We use only allocations with measured quality: the Fisher P4--P8 plans at 5.5 bits for Qwen2.5-14B-Instruct~\cite{qwen2025qwen25} (7.2\%, 45.6\%, 41.2\%, 3.1\% and 2.9\% of decode tiles at P4 to P8) and Llama-3.1-8B-Instruct, and the BitMoD plan at 4.0 bits~\cite{chen2025bitmod} on Llama-3.1-8B. We also run the 5.5-bit Fisher plan of Qwen2.5-32B, whose quality we have not measured, and mark it. Embeddings and the LM head stay in FP16.
+\textbf{Closed workloads (sensitivity).} Three Qwen2.5-14B requests of 1920 prompt and 128 output tokens, and the 84 workloads of \Cref{tab:coverage}, isolate the slack DVFS may spend; their objectives are set relative to each request's nominal latency.
+The attention unit keeps its operands in the 512\,KiB SRAMs, which hold one 2K-token KV head. For contexts up to 4K tokens we tile attention in software, with no RTL change: the query-key product splits into tiles of at most 2016 tokens that re-read the query, and the attention-value product runs as two half-head passes, each tile being one node of the operator graph, and the peak SRAM use of 524{,}160 bytes stays within capacity. At 1920 tokens this workload builder reproduces the 2K workload byte for byte, and the tiled gold outputs match the untiled ones.
+Sweeps, traces and regulator and model variations use the planning model. Llama-3.1-8B runs on the first-order model; 16 held-out RTL executions at its new tile shapes (K=4096, 7168) stay within 1.47\% (mean 0.31\%) of the tables.
+
+\subsection{Energy accounting}
+Dynamic energy per component is calibrated from ASAP7 power of the array, VU and SRAM and scaled to each block's work, with MAC energy at the per-precision PE energy.
+HBM energy follows device activity and background power, and regulators follow the efficiency curve of~\cite{xue2026finedvfs}.
+As in~\cite{xue2026finedvfs}, we report savings against NoDVFS, an accelerator that runs every domain at peak V/$f$ with fixed-voltage regulators and no gating.
+Since gating removes much of the idle energy DVFS would otherwise remove, every configuration applies power and clock gating at nominal voltage (PG+CG), and we also report savings over PG+CG.
+
+\subsection{Configurations and objectives}
+Every configuration uses the same precision allocation, schedule and power gating: NoDVFS; PG+CG; a single rail per core switched per phase or per layer; and multi-domain DVFS on four rails per core under the controller of \Cref{sec:pivot} with worst-case, average or per-tile costing, of which per-tile costing is \sys{}.
+
+
+\textbf{Latency targets.} We take absolute targets from MLPerf Inference: for Llama-3.1-8B, 2\,s TTFT and 100\,ms TPOT (Server) and 0.5\,s and 30\,ms (Interactive)~\cite{mlperf_llama31}. MLPerf has no Qwen benchmark, so Qwen models borrow the Server targets of Llama-2-70B, 2\,s and 200\,ms~\cite{mlperf_llama270b}; its 40\,ms Interactive TPOT lies below Qwen2.5-14B's peak-V/$f$ TPOT, so we omit that tier.
+A single chip cannot meet the absolute TTFT on long prompts at any voltage: prefill takes 3.7\,ms per token on Qwen2.5-14B at peak V/$f$, so 2\,s covers about 540 tokens, and more chips do not help because one request's prefill runs on one chip. Each request $j$ therefore gets the TTFT limit $\max(T,\ (1+b)\,R_j)$, where $T$ is the MLPerf target, $R_j$ the request's TTFT at peak V/$f$ on the same trace, and $b$ is 5\% or 25\%; TPOT stays absolute. The limit is the same for every configuration. We report misses against this limit and, separately, how many requests meet the plain MLPerf TTFT, since the allowance can also push a request that met $T$ at peak past it.
+On closed workloads objectives are relative to nominal latency, as above. The controller receives no future arrivals on any workload.
+
+\subsection{Model quality}
+We measure each plan's quality on GPUs with FlexPosit-quantized weights and FP16 activations: WikiText-2 perplexity over 2048-token windows, MMLU (1140 questions, 5-shot) and GSM8K (250 problems, greedy chain of thought).
+GPU arithmetic does not reproduce the array's sequential FP16 accumulation and serves only for quality.

@@ -1,0 +1,1 @@
+{"P/matrix": {"a": 0.71, "pc": 0.57, "g": 0.66}, "P/vector": {"y": 0.44}, "D/matrix": {"a": 0.3, "absorb": 1, "b": 0.05}, "D/vector": {"y": 0.43}, "D/attention": {"y": 0.77}, "D/fp16": {"a": 0.9}}

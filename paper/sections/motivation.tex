@@ -1,0 +1,48 @@
+\section{Background and Challenges}
+\label{sec:motivation}
+
+\textbf{Mixed-precision weights on a bit-serial datapath.}
+FlexPosit~\cite{gao2026flexposit} applies posit formats~\cite{gustafson2017posit} to LLM weights and lets an accelerator choose a precision from P4 to P8 per group of output channels.
+For Qwen2.5-14B~\cite{qwen2025qwen25}, uniform P4 and P5 weights raise WikiText-2 perplexity from 5.88 (FP16) to 7.86 and 6.41, while a Fisher-guided allocation of P4--P8 per 32-channel group reaches 6.11 at 5.5 bits per weight; the key and value projections average 7.2 and 7.6 bits, most others P5 or P6.
+Serializing weight bits costs decode no throughput, since decode is HBM-bound at every precision (\Cref{fig:motivation}b), and makes MAC time and energy scale with precision. Each array command of our datapath processes one 32-column weight tile and serializes its weight bits, so a tile takes $94+20(p-4)$ cycles at precision $p$, its MAC energy grows from 1.24 to 2.04\,pJ per MAC, and its weight bytes grow in proportion to $p$.
+We call one node of the operator graph, such as the query projection of one layer, a \emph{block}. A block's compute time $C$ therefore follows the precisions of its tiles and its HBM time $M$ its weight bytes.
+DVFS can lower a block's operating point without delay as long as its stretched $C$ stays within $M$; we call the lowest such point its \emph{free point}, and the latency budget under the TTFT and TPOT objectives the \emph{slack}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_motivation.pdf}
+\caption{(a) Precision-dependent imbalance: saving over power and clock gating of a single rail switched per phase or per layer, and of \sys{}'s multi-domain plan (calibrated first-order model, 3$\times$2K-token requests). (b) Balance shift: compute time over HBM time of Qwen2.5-14B projections on 256 arrays; precision moves the prefill query projection across the balance point.}
+\label{fig:motivation}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_units.pdf}
+\caption{Precision moves each domain differently (Qwen2.5-14B, 2K-token prompt, 256 arrays, peak V/$f$; Mix is the 5.5-bit Fisher allocation): (a) prefill busy time relative to P4; (b) energy under power and clock gating.}
+\label{fig:units}
+\end{figure}
+
+\textbf{C1: Precision-dependent imbalance.}
+We ran 45 nominal cases, three models at three prompt lengths and five precisions (\Cref{fig:units}).
+From P4 to P8 a Qwen2.5-14B prefill's HBM time grows by 94\%, MAC time by 33\%, memory-logic time by 11\%, and vector time not at all; the nine model and prompt combinations agree (HBM +91--95\%, MAC +33--56\%, memory logic +11\%, vector 0).
+$C/M$ falls from 1.16 to 0.80 and the compute-bound share of prefill blocks from 0.74 to 0 on Qwen2.5-14B.
+Energy moves with it, from memory logic (32 to 25\%) to MAC (35 to 41\%) and HBM (19 to 23\%), and the vector rail, which dominates prefill busy time, keeps TTFT from moving as much as the blocks do (+20\%).
+The components therefore want different voltages at once: at a 5\% TTFT budget the planner puts the vector rail near 0.69\,V at every precision, the MAC rail at 0.55--0.59\,V and LOGIC near 0.47\,V, and at 25\% the MAC rail reaches the 0.45\,V floor while the vector rail stays at 0.69\,V.
+The naive solution is one rail per core, as in per-core NPU DVFS~\cite{ascend_dvfs:asplos25}.
+That rail must stay high for the vector unit and so cannot lower the MAC domain.
+Even with 34 points and full knowledge of the requests, switched per phase it saves 1.2--3.9\% at TTFT budgets of 2--25\%, and switched per layer 0.8--1.7\% (\Cref{fig:motivation}a).
+
+
+\textbf{C2: Crossing latency.}
+Solving C1 with separate domains creates the next problem. Precision shortens matrix tiles but not the vector chains between them, and the domains insert synchronizers on these chains: a dependent operation that waits for a result from another domain pays the crossing twice, about 29\,ns per instruction on a SiLU chain against a 4.2\,ns local issue in the FP32 vector unit (VU).
+Normalization, activation and softmax kernels are chains of dependent vector instructions, so these round trips add up: with every dependency crossing, the kernels take 4.2--6.9$\times$ as long and TTFT grows by 41--46\% across nine workloads.
+The naive fix keeps a shadow copy of recent results in the VU domain but aliases it to frontend registers~\cite{xue2026finedvfs}, so every result is still written back across the crossing; the return queue must cover the round trip of every instruction.
+
+\textbf{C3: Balance shift.}
+Precision decides on which side of the balance point ($C=M$) a block falls (\Cref{fig:motivation}b).
+Decode blocks read every weight once per token and stay HBM-bound at any precision ($C/M$ 0.32--0.42); prefill blocks of a 1920-token prompt sit near the balance point, and the query projection is compute-bound from P4 to P6 but HBM-bound at P8.
+Prefill holds 93.8\% of the MAC energy of a 1920+128-token request, so this side decides most of what DVFS on the MAC domain can save.
+The naive solution is to cost tiles without the allocation.
+A planner that costs every tile at the worst-case precision~\cite{xue2026finedvfs}, P8 here, never underestimates a tile, but it overestimates every P4--P6 prefill block by up to $1.85\times$, treats TTFT slack as spent and finds no free points in compute-bound blocks.
+Costing every tile at the allocation's average precision misjudges the blocks whose own precision differs from the average, though it ranks most steps correctly (\Cref{sec:results}).
+

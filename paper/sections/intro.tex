@@ -1,0 +1,37 @@
+\section{Introduction}
+\label{sec:intro}
+
+% Mixed precision
+Mixed-precision weights let an accelerator serve large language models (LLMs) with far fewer weight bits and little quality loss: a Fisher-guided P4--P8 posit allocation of Qwen2.5-14B at 5.5 bits per weight keeps WikiText-2 perplexity at 6.11, against 5.88 for FP16 and 6.41 for uniform 5-bit weights.
+On a bit-serial datapath such as FlexPosit~\cite{gao2026flexposit}, a weight tile takes 94 cycles at P4 and 174 at P8, so the compute time $C$ of a block follows the precisions of its tiles while its HBM time $M$ follows its weight bytes.
+
+% Energy is not handled well: three problems
+Serving, however, is increasingly limited by energy rather than by peak throughput~\cite{iea2025energyai,tpuv4:isca23}, and precision alone handles energy poorly, for three reasons.
+First, precision reaches only part of the energy: under power and clock gating at peak voltage and frequency (V/$f$), the MAC arrays take 35--41\% of the energy of a Qwen2.5-14B request from P4 to P8, and the rest goes to memory logic, HBM and vector units that respond differently or not at all.
+Second, time saved is not turned into energy saved: a low-precision tile finishes early but the whole core stays at one V/$f$, so arrays wait for HBM while logic stays powered, and memory logic alone takes 25--32\% of the energy.
+Third, energy management does not see precision: dynamic voltage and frequency scaling (DVFS) for accelerators can spend the slack under the time-to-first-token (TTFT) and time-per-output-token (TPOT) objectives of each request~\cite{ascend_dvfs:asplos25,xue2026finedvfs}, but it was built for fixed precision, and costing tiles at the worst-case precision loses up to 46\% of the attainable saving at the same objectives.
+
+% Insight
+Our insight is that the components want different voltages at the same time, and that this holds per block: under a 5\% TTFT budget the vector rail stays near 0.69\,V at every precision while the MAC rail settles at 0.55--0.59\,V and array logic near 0.47\,V. Precision varies between blocks, not within them: 76\% of its variance lies between blocks, and a voltage change costs a fifth or more of a tile but at most about 1\% of a block, and splitting blocks into sub-blocks gains nothing on our workloads.
+A block is therefore the right unit, and since precision is fixed at compile time, the precision map tells, before a request runs, how far each block's $C$ lies from its $M$.
+We use this to minimize energy on production traces while requests meet latency targets taken from MLPerf Inference~\cite{mlperf_llama31,mlperf_llama270b}.
+
+% Three challenges; C2 comes from the answer to C1
+Acting on this insight raises three challenges (\Cref{sec:motivation}).
+\emph{C1, precision-dependent imbalance}: precision changes each component's load by a different amount, so components need their own operating points; a single rail per core cannot provide this, and switched per layer or per phase it saves 0.8--3.9\% over power and clock gating.
+\emph{C2, crossing latency}: solving C1 with separate domains creates a new cost, because precision shortens matrix tiles but not the dependent vector chains between them, and the domains put synchronizers on these chains; without local forwarding, TTFT grows by 41--46\% and the objectives can no longer be met, and forwarding through shadow registers that alias frontend registers~\cite{xue2026finedvfs} sends every result back across the crossing, which stalls vector kernels by 45--50\% behind a 4-entry return queue and costs 1.4--4.2 points of saving.
+\emph{C3, balance shift}: precision decides whether a block is compute-bound ($C>M$) or HBM-bound, so a planner must follow the side each block falls on, and it must do so fast enough to run per request without searching the schedule.
+
+% Our approach: one technique per challenge
+We present \sys{} (MIxed-precision accelerator with Domain-level, precision-Aware Scaling), with one technique per challenge.
+\emph{T1} (\Cref{sec:arch}) splits each core into four small V/$f$ rails, for the MAC arrays, array logic, vector and attention units, and memory, each with its own regulator, and a voltage change drains only its target rail at a tile boundary.
+\emph{T2} (\Cref{sec:arch}) removes the crossing cost that T1 introduces: since most vector results are consumed only inside the vector unit, the unit keeps them in local shadow slots and returns only results the compiler marks as exported, which needs a 4-entry return queue and 42\% less interface area than writing every result back with no stall.
+\emph{T3} (\Cref{sec:pivot}) is a causal, search-free controller that reads the precision map, gives each block its free point, the lowest point at which $C$ stays within $M$, and at dispatch spends the slack it measures on the steps with the largest energy saved per unit of delay first, with separate TTFT and TPOT budgets.
+
+% Contributions
+This paper makes three contributions:
+\begin{itemize}
+\item An analysis of DVFS for mixed-precision LLM accelerators that identifies three energy problems of mixed precision and the challenges of precision-dependent imbalance, crossing latency and balance shift, and quantifies how single rails, write-back-all forwarding, and worst-case and average costing fail (\Cref{sec:motivation}).
+\item \sys{}, a multi-domain accelerator core with per-domain switching and an export-only vector interface (T1, T2), and a search-free causal controller (T3).
+\item An RTL-calibrated request-level evaluation whose P4--P8 matrix timing predicts held-out layers within 1.94\% and held-out tile shapes within 1.47\%, and whose fast planning model predicts the latency of held-out multi-domain plans within 2.3\% of the request replay. On Azure traces with MLPerf-derived targets, \sys{} saves \TBD{x--y\%} of energy over an accelerator at peak V/$f$ without gating, the baseline of prior fine-grained DVFS work~\cite{xue2026finedvfs}, of which power and clock gating account for \TBD{x} points. We also report what does not help: per-block costing about matches average costing, and allocating precision for energy adds at most 0.4 points (\Cref{sec:results}).
+\end{itemize}

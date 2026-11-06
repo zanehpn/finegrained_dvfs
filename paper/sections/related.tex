@@ -1,0 +1,14 @@
+\section{Related Work}
+\label{sec:related}
+
+\textbf{DVFS for accelerators.}
+Per-domain DVFS dates to multiple-clock-domain processors~\cite{dvfs_mcd:hpca02}; CPUs and GPUs scale voltage per core or SM~\cite{fine_grained_dvfs:taco11,dvfs_gpu:amd:asplos23}.
+For NPUs, Ascend DVFS sets one point per core for LLM serving~\cite{ascend_dvfs:asplos25}, and Xue et al.~\cite{xue2026finedvfs}, the closest work, split an NPU core into component domains with cross-domain forwarding and an ISA for sub-microsecond control.
+They cost blocks from tensor shapes on a fixed-precision (BF16) systolic array and use worst-case estimates for data-dependent behavior, the treatment our worst-case baseline applies to precision.
+Their shadow registers alias frontend registers; our VU returns only exports.
+ReGate~\cite{regate:micro25} power-gates idle NPU components; our DVFS savings come on top of such gating.
+
+\textbf{Mixed-precision quantization and hardware.}
+Post-training quantization keeps LLM quality at four bits per weight~\cite{frantar2023gptq,lin2024awq}, and sensitivity-guided allocation assigns precision per layer or channel~\cite{dong2019hawq}.
+Bit-serial and bit-composable accelerators turn lower precision into proportionally fewer cycles~\cite{judd2016stripes,sharma2018bitfusion}, and FlexPosit~\cite{gao2026flexposit} brings tunable posit precision~\cite{gustafson2017posit} to LLM inference.
+These works turn precision into speed or area; we turn it into voltage per domain.

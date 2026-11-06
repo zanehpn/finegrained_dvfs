@@ -1,0 +1,46 @@
+\section{MIDAS Accelerator}
+\label{sec:arch}
+
+\Cref{fig:arch} shows the organization.
+Prefill and decode run on separate cores (P and D), as in disaggregated serving~\cite{splitwise:isca24,zhong2024distserve}, and the P core hands the KV cache to the D core over an on-package link.
+Each core has $k$ replicated matrix arrays, a VU for normalization, activations and softmax, an attention unit, and a memory subsystem (MEM) with 512\,KiB activation and weight SRAMs behind a DMA engine to 16 shared HBM3 channels.
+A matrix array is a $16\times32$ grid of DP4 lanes that consumes one 32-column FlexPosit weight tile per command and accumulates in FP16.
+Weights are stored per tile at the tile's precision, the weight SRAM double-buffers tiles so the DMA engine prefetches the next tile during the current one, and a precision change between tiles only changes the command's precision field.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_arch.pdf}
+\caption{\sys{} organization (T1): each core has four rails, shown by color, each with its own regulator; a voltage change drains only the domains on its target rail.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{T1: Per-domain operating points}
+\emph{Challenge.} C1: precision shifts each component's load differently, and a single rail per core cannot follow it.
+\emph{Insight.} The bottleneck differs between components at the same time, and small rails switch fast: a regulator sized for one domain changes voltage in nanoseconds, and only the domains on the critical path need a high point.
+\emph{Design.} Each core has four rails (\Cref{fig:arch}): MAC (the DP4 grids of all arrays), LOGIC (command sequencing, posit decode and output staging), VEC (the VU and the attention unit) and MEM, plus an always-on domain for the domain controllers.
+Rails group domains that need the same voltage or never run together: the VU and the attention unit never run at the same time on a core, and the LOGIC domains take 8.5\% of array energy and share a clock headroom, since at twice the MAC stretch OUT still keeps up with the MAC domain. Each rail is a hybrid switched-capacitor/digital-LDO regulator sized by its peak power with a 54\,mV step every 4\,ns and 87\% efficiency at 0.7\,V, as characterized in~\cite{xue2026finedvfs}, and 34 frequency states from 250 down to 83\,MHz. Each state's voltage comes from STA of the MAC, attention and FP32 vector netlists at seven voltages from 0.45 to 0.70\,V on ASAP7 libraries at the typical corner, pre-layout, with a 1\% margin on the path; two held-out voltages stay within 1.7\% of the interpolation, on the safe side. The FP32 vector unit closes at 4.2\,ns at 0.7\,V. At 0.45\,V a MAC tile takes $3.02\times$, a VU instruction $3.45\times$ and an attention command $3.18\times$ the nominal 4\,ns time.
+A voltage change is requested only at a drained tile boundary of the target domain, once the domain's queues and pending writes are empty; only that domain stalls, so a change costs one tile boundary and can follow every block.
+Domains idle beyond the break-even time are power gated.
+\emph{Why it works.} During compute-bound prefill the MAC rail stays at the point the TTFT slack allows while MEM and LOGIC drop: in an RTL capture of one tile at matched clocks, lowering the LOGIC domains to 0.6\,V saves 2.3\% of array energy with unchanged duration.
+During HBM-bound decode the MAC domain drops to its free point while MEM keeps up with HBM.
+
+\subsection{T2: Local shadow slots with export-only return}
+\emph{Challenge.} C2: vector chains do not shrink with precision, each crossing on them pays a round trip, and write-back-all forwarding still sends every result across.
+\emph{Insight.} Most vector results are consumed only by later vector instructions: in the Qwen2.5-14B kernels, 0.01\% (argmax) to 25\% (residual add) of the results leave the VU, and 2.2\% for SiLU, the kernel with the most instructions.
+\emph{Design.} The VU keeps intermediate vectors in four compiler-managed shadow slots in its own domain and forwards them through a bypass, so a dependent instruction issues in the next VU cycle (4.2\,ns).
+A result crosses back only when the compiler marks it as exported, so the return queue is sized by the export rate instead of by the round trip.
+The compiler also guarantees at most one external vector operand and two broadcast immediates per instruction, which removes the operand gather registers and shortens the descriptor from 164 to 132 bits.
+Array commands likewise send descriptors ahead of operand data, leaving 37.5\,ns of cross-domain setup per tile (0.39--0.82\% of latency).
+\emph{Why it works.} SiLU shows why (\Cref{fig:t2}b): of its 2{,}976 instructions only 64 (2.2\%) leave the VU, so export-only runs them in 12.5\,$\mu$s, one per cycle; returning every result takes 18.7\,$\mu$s behind a 4-entry queue, and without local forwarding 85.8\,$\mu$s, or 28.8\,ns per instruction. We compared the two return policies on the same VU core in a Verilator simulation of the bridge RTL that replays six Qwen2.5-14B kernels cycle by cycle at the 1.2\,ns frontend and 4.2\,ns VU periods.
+Write-back-all stalls by 45--50\% with a 4-entry return queue and needs 8 entries for no stall; export-only stays at 0\% with 4 entries and 5{,}799\,$\mu$m$^2$ of interface logic, 42\% less than the 8-entry write-back interface, or 4{,}160\,$\mu$m$^2$ per array core (1.5\%). The request-level effect is in \Cref{sec:results}. DIV and SQRT read their operands from the shadow slots, one cycle later than a bypass (LayerNorm: 1172 against 1168 cycles), which removes the FP32 unit's critical path into the shared divider.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_t2.pdf}
+\caption{T2: (a) the VU keeps intermediate results in local shadow slots and bypasses them to the next instruction; only exports cross back. (b) Worked example from lockstep RTL at the 1.2/4.2\,ns frontend/VU periods: with no local forwarding every SiLU instruction pays a round trip, write-back-all saturates the 4-entry return queue, and export-only issues one instruction per VU cycle.}
+\label{fig:t2}
+\end{figure}
+
+\subsection{Cost}
+We synthesized the array core in ASAP7~\cite{asap7}: it occupies 0.273\,mm$^2$, and level shifters, asynchronous FIFOs and per-domain clock control add 10{,}725\,$\mu$m$^2$ (4.1\%).
+Sizing each rail by its domain's peak power at 0.7\,V with the regulator area per watt of~\cite{xue2026finedvfs}, the eight rails of the two 256-array cores take 6.5\,mm$^2$, 3.3\% of the 139.8\,mm$^2$ of arrays beyond the fixed-voltage regulators needed anyway; one DVFS rail per core would take 3.1\%, so per-domain rails cost 0.3\% of area for 9.7 and 18.1 points more saving than that rail switched per layer at TTFT budgets of 5\% and 25\%.

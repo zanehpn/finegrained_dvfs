@@ -1,0 +1,35 @@
+\section{T3: Planning from the Precision Map}
+\label{sec:pivot}
+
+\emph{Challenge.} C3: precision decides on which side of the balance point a block falls, and worst-case or average costing misplaces blocks.
+A controller must also work at the scale of a request, $10^5$ blocks, and decide while the request runs, before later arrivals and the output length are known; trying every lowering on the schedule, as a greedy search does, takes minutes to 41\,min.
+\emph{Insight.} The two quantities that decide a block's response to DVFS, $C$ and $M$, are known at compile time from the precision map and the weight bytes, and the cost of a lowering follows from them in closed form.
+The right unit for this is the block. Across the 384 prefill blocks of Qwen2.5-14B, 76\% of the precision variance lies between blocks, against 29\% between module types and 21\% between layers, and the median block mixes two adjacent precisions. Inside a block a constant point is the cheapest, since energy is convex in voltage and energy per cycle differs by only 12\% between P4 and P8, and a 0.25\,V round trip takes 37\,ns, 23--35\% of a tile but at most about 1\% of a block.
+The controller therefore needs one sort instead of a search.
+Its inputs are the operator graph of the requests, the precision map, and calibrated cost tables that give, for every tile precision, next-tile precision, operating point and memory clock, the command, prefetch, setup and drain times (\Cref{sec:method}); it picks an operating point per domain and block when the block is dispatched.
+
+\textbf{Step 1: free points.}
+Any point whose stretch $s$ keeps $C\cdot s$ plus the regulator transitions within $M$ leaves the block's latency unchanged, so each block receives the lowest such point by a lookup on $C/M$.
+Because $C$ follows the tile precisions, the same projection has a free point below nominal at P8 and none at P4--P6.
+
+\textbf{Step 2: slack to the steepest steps.}
+Lowering a block one level beyond its free point delays it by $\Delta T=\max(C s',M)-\max(C s,M)$ and saves $\Delta E=E_{\mathrm{dyn}}(r_s-r_{s'})-P_{\mathrm{bg}}\Delta T$, where $r$ is the energy ratio of a point and $P_{\mathrm{bg}}$ the chip's time-proportional power.
+Blocks just past the balance point have the smallest $\Delta T$, since their HBM time absorbs part of the stretch, and among compute-bound blocks narrow tiles spend more energy per cycle (0.0132 against 0.0117\,pJ per MAC per tile cycle at P4 and P8), so their steps are steeper.
+Ahead of time the controller takes the lower convex hull of each block's (latency, energy) points over the 34 points of each rail and sorts the steps of each request phase by $\Delta E/\Delta T$; at run time it accepts them in order while the slack lasts.
+
+\textbf{Step 3: one budget per phase, spent causally.}
+TTFT slack pays for prefill steps and TPOT slack for decode steps.
+At a request's admission and at each layer, the controller measures elapsed time, subtracts the remaining time of its nominal twin, a model of the same hardware at peak V/$f$, and takes the request's remaining steps in order until the slack left is spent.
+A request that has arrived and waits behind the current one tightens this budget, since it inherits the delay.
+Each decode step receives the smallest TPOT credit among its members, which needs no output length.
+A decode block gains from TPOT slack only past its free point: with one request and a 2K context $C\ll M$ even at 0.45\,V and TPOT slack buys nothing, while decode batches move $C$ toward $M$ and make these steps the steepest ones.
+
+\textbf{Feedback.}
+Budgets close on measured time, so no schedule check or repair is needed. In our Python prototype, tables take \TBD{13--15\,s} per workload and a decision \TBD{0.4--1.7\,ms}.
+On closed workloads the result is validated, and if the measured budget use exceeds the objective, the budget is scaled by $0.95\times$ the objective over the measured use and the workload is repeated, at most three times; unused budget is never given back, and the rule is the same for every costing (\TBD{rounds used on the replay}). On traces the guard is preset to 0.9 of the budget, because later arrivals cannot be known, so misses remain possible and we report them. Most misses have one cause: delay outlives its request, so a short request that would have found the machine idle at peak V/$f$ queues behind a slowed long prefill that the controller could not hold back for it.
+
+\textbf{Without the precision map.}
+For the evaluation we keep the controller and change only what it knows of a tile: worst-case costing uses the widest precision in the model, and average costing the allocation's weight-averaged precision.
+Weight bytes reveal precision, so neither baseline sees per-block bytes either; they use bytes scaled to the same precision.
+Every costing receives the same objectives and measures the same elapsed time, and each estimates remaining time from a nominal twin under its own costing, so a baseline is not handed the true clock.
+A single-rail variant applies one point to all domains of a core, per layer or per phase, and is planned by an offline greedy search with full knowledge of the requests, which favors it.
