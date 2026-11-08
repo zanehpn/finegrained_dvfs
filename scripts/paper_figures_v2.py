@@ -34,14 +34,14 @@ def style(ax): ax.grid(axis='y', color=GRID, lw=.5); ax.set_axisbelow(True)
 def fig_motivation():
     fig, (b, a) = plt.subplots(1, 2, figsize=(3.5, 1.55), gridspec_kw=dict(width_ratios=[1.15, 1]))  # (a) granularity, (b) balance
     P = [4, 5, 6, 8]
-    for lab, ys, c, st in (('Prefill q_proj', [1.31, 1.15, 1.04, .90], BLUE, dict(marker='o', ls='-')),
-                           ('Prefill down_proj', [.89, .78, .70, .61], ORANGE, dict(marker='s', ls='--')),
-                           ('Decode q_proj', [.44, .40, .37, .33], AQUA, dict(marker='^', ls=':'))):
+    for lab, ys, c, st in (('Query (prefill)', [1.31, 1.15, 1.04, .90], BLUE, dict(marker='o', ls='-')),
+                           ('FFN down (prefill)', [.89, .78, .70, .61], ORANGE, dict(marker='s', ls='--')),
+                           ('Query (decode)', [.44, .40, .37, .33], AQUA, dict(marker='^', ls=':'))):
         a.plot(P, ys, color=c, label=lab, **st)
-    a.axhline(1, color=INK, lw=.7); a.text(5.15, .985, 'balance point', fontsize=5.5, color=INK, ha='left', va='top')
-    a.set_xticks(P); a.set_xticklabels([f'P{p}' for p in P]); a.set_ylabel('Compute / HBM time'); a.set_ylim(.25, 1.75)
+    a.axhline(1, color=INK, lw=.7); a.text(5.15, .985, 'C/M = 1', fontsize=5.5, color=INK, ha='left', va='top')
+    a.set_xlabel('Weight precision'); a.set_xticks(P); a.set_xticklabels([f'P{p}' for p in P]); a.set_ylabel('Compute-to-HBM time ratio'); a.set_ylim(.25, 1.75)
     a.set_title('(b) Compute-memory balance shift', fontsize=7, color=INK); style(a); a.legend(frameon=False, fontsize=5, loc='upper right', handlelength=1.6)
-    groups = ['TTFT 5%', 'TTFT 25%']
+    groups = ['5', '25']
     N = ('main_t5_d5', 'main_t25_d5'); AB = W/'results/abl_c'
     def sv(d, stem):  # 0 until the 4-rail, 34-point single-rail run exists
         fs = [AB/d/f'{n}_{stem}.json' for n in N]
@@ -53,7 +53,7 @@ def fig_motivation():
         xs = [g+(k-1)*w for g in range(2)]
         b.bar(xs, ys, w*.9, color=c, hatch=h, edgecolor='white', lw=.4, label=lab)
         for x, y in zip(xs, ys): b.text(x, y+.3, f'{y:.1f}' if y else 'TBD', ha='center', va='bottom', fontsize=4.8, color=INK)
-    b.set_xticks(range(2)); b.set_xticklabels(groups); b.set_ylabel('Energy savings\nover PG+CG (%)'); b.set_ylim(0, 25)
+    b.set_xlabel('TTFT slowdown budget (%)'); b.set_xticks(range(2)); b.set_xticklabels(groups); b.set_ylabel('Energy savings\nover PG+CG (%)'); b.set_ylim(0, 25)
     b.set_title('(a) Component imbalance', fontsize=7, color=INK); style(b); b.legend(frameon=False, fontsize=4.8, loc='upper left')
     fig.tight_layout(pad=.25, w_pad=.6); fig.savefig(FIG/'fig_motivation.pdf'); plt.close(fig)
 
@@ -61,7 +61,7 @@ def fig_motivation():
 def fig_units():
     """Per-unit busy time of Qwen2.5-14B layer 23 versus weight precision; numbers above the bars are compute over HBM time."""
     R = json.loads((O/'motivation_workload_v1/result.json').read_text())['rows']
-    names = ['P4', 'P5', 'P6', 'P8', 'Fisher 5.5b']; labs = ['P4', 'P5', 'P6', 'P8', 'Fisher']
+    names = ['P4', 'P5', 'P6', 'P8', 'Fisher 5.5b']; labs = ['P4', 'P5', 'P6', 'P8', 'Fisher-\nguided']
     units = (('MATRIX', 'MAC', BLUE, ''), ('HBM', 'HBM', ORANGE, '////'), ('VU', 'VU', AQUA, '\\\\\\\\'))
     fig, axes = plt.subplots(1, 2, figsize=(3.5, 1.3)); w = .27
     for ax, ph, scale, unit, title in ((axes[0], 'prefill', 1e-3, 'ms', '(a) Prefill, 1920-token prompt'), (axes[1], 'decode', 1., '$\\mu$s', '(b) Decode, one token')):
@@ -91,7 +91,7 @@ def fig_vu():
     ax.plot([0], [max(d[('export', 4)])], color=BLUE, marker='o', ls='none', ms=5, label='Export-only return (MIDAS)')
     for i, n in enumerate(xs): ax.annotate(f'{area[("all", n)]:,} $\\mu$m$^2$', (i, mx[i]), textcoords='offset points', xytext=(4, 3), fontsize=5, color=INK)
     ax.annotate('5,799 $\\mu$m$^2$, 0%', (0, 0), textcoords='offset points', xytext=(6, 6), fontsize=5, color=INK)
-    ax.set_xticks(range(3)); ax.set_xticklabels([str(n) for n in xs]); ax.set_xlabel('Return-queue entries'); ax.set_ylabel('VU slowdown (%)')
+    ax.set_xticks(range(3)); ax.set_xticklabels([str(n) for n in xs]); ax.set_xlabel('Return-queue entries'); ax.set_ylabel('Kernel slowdown (%)')
     ax.set_xlim(-.3, 2.6); ax.set_ylim(-5, 70); style(ax); ax.legend(frameon=False, fontsize=5.5, loc='upper right')
     fig.tight_layout(pad=.25); fig.savefig(FIG/'fig_vu.pdf'); plt.close(fig)
 
@@ -124,22 +124,22 @@ def fig_t2():
     b.set_yticks([2, 1, 0]); b.set_yticklabels([f'{n}\n{ret:,} returns' for n, ret, _ in rows], fontsize=4.8, color=INK); b.tick_params(axis='y', length=0)
     b.set_xlabel('Kernel time ($\\mu$s)', fontsize=5.2, labelpad=1); b.tick_params(axis='x', labelsize=5); b.set_xlim(0, 98); b.grid(axis='x', color=GRID, lw=.5); b.set_axisbelow(True)
     for i, (_, _, d) in enumerate(rows):
-        fig.text(.685, .125+.225*(2-i+.5)/3, f'{N:,} $\\times$ {d/1e3/N:.2f} ns = {d/1e6:.2f} $\\mu$s', fontsize=4.8, color=INK, va='center')
-    fig.text(.012, .385, f'(b) Worked example: SiLU, {N:,} instructions, {exp["returned"]} exported ({100*exp["returned"]/N:.1f}%), RTL at 1.2/4.2 ns', fontsize=6, color=INK, va='center')
+        fig.text(.685, .125+.225*(2-i+.5)/3, f'{d/1e6:.2f} $\\mu$s', fontsize=4.8, color=INK, va='center')
+    fig.text(.012, .385, f'(b) SiLU: {N:,} instructions, {exp["returned"]} exported results ({100*exp["returned"]/N:.1f}%)', fontsize=6, color=INK, va='center')
     fig.savefig(FIG/'fig_t2.pdf'); plt.close(fig)
 
 
 def fig_planner():
     st = [1.0, 1.5, 1.65, 2.125, 2.975]; r = [1.0, .916, .853, .705, .571]
     fig, ax = plt.subplots(figsize=(3.5, 1.5))
-    for lab, cm, c, sty in (('Prefill, just past balance (C/M=1.04)', 1.04, BLUE, dict(marker='o', ls='-')),
-                            ('Prefill, compute-bound (C/M=1.31)', 1.31, ORANGE, dict(marker='s', ls='--')),
-                            ('Decode, HBM-bound (C/M=0.40)', .40, AQUA, dict(marker='^', ls=':'))):
+    for lab, cm, c, sty in (('Prefill (C/M = 1.04)', 1.04, BLUE, dict(marker='o', ls='-')),
+                            ('Prefill (C/M = 1.31)', 1.31, ORANGE, dict(marker='s', ls='--')),
+                            ('Decode (C/M = 0.40)', .40, AQUA, dict(marker='^', ls=':'))):
         T = [max(cm*s_, 1.) for s_ in st]
         ax.plot(T, r, color=c, label=lab, **sty)
     ax.annotate('Free points:\noverlap approximation', xy=(1.0, .705), xytext=(1.3, .64), fontsize=5.3, color=INK,
                 arrowprops=dict(arrowstyle='->', lw=.5, color=MUTED))
-    ax.annotate('Rank lowering steps\n(largest $\\Delta E/\\Delta T$)', xy=(1.30, .958), xytext=(1.55, .53), fontsize=5.3, color=INK,
+    ax.annotate('Lower operating points', xy=(1.30, .958), xytext=(1.55, .53), fontsize=5.3, color=INK,
                 arrowprops=dict(arrowstyle='->', lw=.5, color=MUTED))
     ax.set_xlabel('Block latency / HBM service time $M$'); ax.set_ylabel('Normalized MAC energy'); ax.set_ylim(.5, 1.12); style(ax)
     ax.legend(frameon=False, fontsize=5.0, loc='upper right'); fig.tight_layout(pad=.25); fig.savefig(FIG/'fig_planner.pdf'); plt.close(fig)
@@ -151,7 +151,7 @@ def box(ax, x, y, w, h, text, fc, ec=MUTED, fs=5.5, lw=.6, bold=False):
 
 
 def fig_arch():
-    fig, ax = plt.subplots(figsize=(3.5, 1.85)); ax.set_xlim(0, 10); ax.set_ylim(0, 5.4); ax.axis('off')
+    fig, ax = plt.subplots(figsize=(3.5, 1.85)); ax.set_xlim(0, 10); ax.set_ylim(-.7, 5.4); ax.axis('off')
     for cx, name in ((0.1, 'Prefill core (P)'), (5.1, 'Decode core (D)')):
         box(ax, cx, .55, 4.8, 4.35, '', '#f7f6f3', lw=.8)
         ax.text(cx+.12, 4.62, name, fontsize=6, color=INK, va='center', fontweight='bold')
@@ -164,9 +164,11 @@ def fig_arch():
         box(ax, cx+1.72, .75, 1.3, 1.15, 'Attention\nunit', '#fde3d6', fs=4.8)
         box(ax, cx+3.14, .75, 1.56, 1.15, 'MEM\nSRAM ctrl,\nDMA', '#fdf0cc', fs=4.8)
     ax.annotate('', xy=(5.1, 1.3), xytext=(4.9, 1.3), arrowprops=dict(arrowstyle='->', lw=.7, color=INK))
-    ax.text(5.0, 2.0, 'KV', fontsize=4.8, color=MUTED, ha='center')
-    ax.text(5.0, 5.22, 'Four rails per core, one color each: MAC, LOGIC, VEC, MEM', fontsize=5.2, color=INK, ha='center', va='center')
-    ax.text(5.0, .22, 'Both cores share 16 HBM3 channels', fontsize=5, color=MUTED, ha='center')
+    ax.annotate('KV-cache link', xy=(5.0, 1.3), xytext=(5.0, .05), fontsize=4.8, color=MUTED, ha='center', arrowprops=dict(arrowstyle='-', linestyle=':', lw=.5, color=MUTED))
+    for xpos, label, color in ((2.2, 'MAC', '#3987e5'), (4.0, 'LOGIC', '#dbe9fb'), (6.0, 'VEC', '#fde3d6'), (7.8, 'MEM', '#fdf0cc')):
+        ax.scatter([xpos], [5.22], marker='s', s=20, c=color, edgecolors=MUTED, linewidths=.3)
+        ax.text(xpos+.22, 5.22, label, fontsize=5.7, color=INK, va='center')
+    ax.text(5.0, -.5, 'Both cores share 16 HBM3 channels', fontsize=5, color=MUTED, ha='center')
     fig.tight_layout(pad=.1); fig.savefig(FIG/'fig_arch.pdf'); plt.close(fig)
 
 
