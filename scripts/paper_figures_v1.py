@@ -19,7 +19,7 @@ W = Path('/shared/s3/zqy/dac2027_p1')
 O = Path(os.environ.get('FIG_DATA', W/'results/cal'))
 FIG = Path(os.environ.get('FIG_DIR', W/'paper/figures')); FIG.mkdir(exist_ok=True)
 COL = {'aware': '#2a78d6', 'mean': '#eb6834', 'worst': '#1baf7a'}
-NAME = {'aware': 'Per block (MIDAS)', 'mean': 'Average precision', 'worst': 'Worst case'}
+NAME = {'aware': 'Per-tile precision\n(MIDAS)', 'mean': 'Average precision', 'worst': 'Worst-case precision'}
 STY = {'aware': dict(marker='o', ls='-'), 'mean': dict(marker='s', ls='--'), 'worst': dict(marker='^', ls=':')}
 INK, MUTED, GRID = '#1f1f1e', '#6b6a64', '#e4e3df'
 plt.rcParams.update({'font.size': 7, 'font.family': 'serif', 'axes.edgecolor': MUTED, 'axes.labelcolor': INK,
@@ -44,7 +44,7 @@ def fig_breakdown():
         bars = ax.bar(xs, vals, w*.92, color=col, label=lab, edgecolor='white', lw=.6)
         for x, v in zip(xs, vals): ax.text(x, v+.6, f'{v:.1f}', ha='center', va='bottom', fontsize=5.5, color=INK)
     ax.set_xticks(range(len(steps))); ax.set_xticklabels([s[1] for s in steps], fontsize=6)
-    ax.set_ylabel('Saving vs NoDVFS (%)'); ax.set_ylim(0, 40); style(ax)
+    ax.set_ylabel('Energy savings\nover NoDVFS (%)'); ax.set_ylim(0, 40); style(ax)
     ax.legend(frameon=False, fontsize=6, loc='lower center', bbox_to_anchor=(.5, 1.0), ncol=2)
     fig.tight_layout(pad=.3); fig.savefig(FIG/'fig_breakdown.pdf'); plt.close(fig)
 
@@ -66,7 +66,7 @@ def fig_slack():
         ax.plot(xs, ys, color=COL[b], label=NAME[b], **STY[b])
         if ys: ax.annotate(f'{ys[-1]:.1f}', (xs[-1], ys[-1]), textcoords='offset points', xytext=(4, -2), fontsize=5.5, color=INK)
     ax.set_xticks(range(len(budgets))); ax.set_xticklabels([f'{t}/{d}' for t, d in budgets])
-    ax.set_xlabel('TTFT / TPOT budget (%)'); ax.set_ylabel('Saving vs NoDVFS (%)'); style(ax)
+    ax.set_xlabel('TTFT/TPOT slowdown budget (%)'); ax.set_ylabel('Energy savings\nover NoDVFS (%)'); style(ax)
     ax.legend(frameon=False, fontsize=6, loc='upper left'); fig.tight_layout(pad=.3); fig.savefig(FIG/'fig_slack.pdf'); plt.close(fig)
 
 
@@ -77,9 +77,9 @@ def fig_batch():
         for b in ('worst', 'mean', 'aware'):
             pts = [(B, R[(f'{model}_batch{B}', False, b)]['saving_vs_pg_cg']) for B in (1, 4, 16, 64) if (f'{model}_batch{B}', False, b) in R]
             if pts: ax.plot(range(len(pts)), [y for _, y in pts], color=COL[b], label=NAME[b], **STY[b])
-        ax.set_xticks(range(4)); ax.set_xticklabels(['1', '4', '16', '64']); ax.set_xlabel('Decode batch')
+        ax.set_xticks(range(4)); ax.set_xticklabels(['1', '4', '16', '64']); ax.set_xlabel('Decode batch size')
         ax.set_title('Qwen2.5-14B' if model == 'qwen' else 'Llama-3.1-8B', fontsize=7, color=INK); style(ax)
-    axes[0].set_ylabel('Saving vs PG+CG (%)'); axes[1].legend(frameon=False, fontsize=5.5, loc='upper right')
+    axes[0].set_ylabel('Energy savings\nover PG+CG (%)'); axes[1].legend(frameon=False, fontsize=5.5, loc='upper right')
     fig.tight_layout(pad=.3); fig.savefig(FIG/'fig_batch.pdf'); plt.close(fig)
 
 

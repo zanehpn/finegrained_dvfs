@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from paper_figures_v2 import FIG, BLUE, ORANGE, AQUA, YELLOW, INK, MUTED, style
-M = Path('/shared/s3/zqy/dac2027_p1/results/motivation_c'); P = ['P4', 'P5', 'mixed', 'P6', 'P8']; X = [4, 5, 5.5, 6, 8]; LAB = ['P4', 'P5', 'Mix', 'P6', 'P8']
+M = Path('/shared/s3/zqy/dac2027_p1/results/motivation_c'); P = ['P4', 'P5', 'mixed', 'P6', 'P8']; X = [4, 5, 5.5, 6, 8]; LAB = ['P4', 'P5', 'Fisher', 'P6', 'P8']
 
 
 def load(m, p): return {x: json.loads((M/f'{m}_p{p}_{x}.json').read_text()) for x in P}

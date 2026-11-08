@@ -40,31 +40,31 @@ def fig_motivation():
         a.plot(P, ys, color=c, label=lab, **st)
     a.axhline(1, color=INK, lw=.7); a.text(5.15, .985, 'balance point', fontsize=5.5, color=INK, ha='left', va='top')
     a.set_xticks(P); a.set_xticklabels([f'P{p}' for p in P]); a.set_ylabel('Compute / HBM time'); a.set_ylim(.25, 1.75)
-    a.set_title('(b) Balance shift', fontsize=7, color=INK); style(a); a.legend(frameon=False, fontsize=5, loc='upper right', handlelength=1.6)
+    a.set_title('(b) Compute-memory balance shift', fontsize=7, color=INK); style(a); a.legend(frameon=False, fontsize=5, loc='upper right', handlelength=1.6)
     groups = ['TTFT 5%', 'TTFT 25%']
     N = ('main_t5_d5', 'main_t25_d5'); AB = W/'results/abl_c'
     def sv(d, stem):  # 0 until the 4-rail, 34-point single-rail run exists
         fs = [AB/d/f'{n}_{stem}.json' for n in N]
         return [json.loads(x.read_text())['saving_vs_pg_cg'] for x in fs] if all(x.exists() for x in fs) else [0., 0.]
-    series = [('Single rail, per phase', sv('coarse_granularity_v1', 'phase'), LIGHT, '////'), ('Single rail, per layer', sv('coarse_granularity_v1', 'layer'), '#86b6ef', '\\\\\\\\'),
+    series = [('Single-rail, per phase', sv('coarse_granularity_v1', 'phase'), LIGHT, '////'), ('Single-rail, per layer', sv('coarse_granularity_v1', 'layer'), '#86b6ef', '\\\\\\\\'),
               ('Multi-domain (MIDAS)', sv('core', 'aware'), '#1c5cab', '')]
     w = .27
     for k, (lab, ys, c, h) in enumerate(series):
         xs = [g+(k-1)*w for g in range(2)]
         b.bar(xs, ys, w*.9, color=c, hatch=h, edgecolor='white', lw=.4, label=lab)
         for x, y in zip(xs, ys): b.text(x, y+.3, f'{y:.1f}' if y else 'TBD', ha='center', va='bottom', fontsize=4.8, color=INK)
-    b.set_xticks(range(2)); b.set_xticklabels(groups); b.set_ylabel('Saving vs PG+CG (%)'); b.set_ylim(0, 25)
-    b.set_title('(a) One rail vs domains', fontsize=7, color=INK); style(b); b.legend(frameon=False, fontsize=4.8, loc='upper left')
+    b.set_xticks(range(2)); b.set_xticklabels(groups); b.set_ylabel('Energy savings\nover PG+CG (%)'); b.set_ylim(0, 25)
+    b.set_title('(a) Component imbalance', fontsize=7, color=INK); style(b); b.legend(frameon=False, fontsize=4.8, loc='upper left')
     fig.tight_layout(pad=.25, w_pad=.6); fig.savefig(FIG/'fig_motivation.pdf'); plt.close(fig)
 
 
 def fig_units():
     """Per-unit busy time of Qwen2.5-14B layer 23 versus weight precision; numbers above the bars are compute over HBM time."""
     R = json.loads((O/'motivation_workload_v1/result.json').read_text())['rows']
-    names = ['P4', 'P5', 'P6', 'P8', 'Fisher 5.5b']; labs = ['P4', 'P5', 'P6', 'P8', 'Mixed']
+    names = ['P4', 'P5', 'P6', 'P8', 'Fisher 5.5b']; labs = ['P4', 'P5', 'P6', 'P8', 'Fisher']
     units = (('MATRIX', 'MAC', BLUE, ''), ('HBM', 'HBM', ORANGE, '////'), ('VU', 'VU', AQUA, '\\\\\\\\'))
     fig, axes = plt.subplots(1, 2, figsize=(3.5, 1.3)); w = .27
-    for ax, ph, scale, unit, title in ((axes[0], 'prefill', 1e-3, 'ms', '(a) Prefill, 2K-token prompt'), (axes[1], 'decode', 1., '$\\mu$s', '(b) Decode, one token')):
+    for ax, ph, scale, unit, title in ((axes[0], 'prefill', 1e-3, 'ms', '(a) Prefill, 1920-token prompt'), (axes[1], 'decode', 1., '$\\mu$s', '(b) Decode, one token')):
         for k, (key, lab, c, h) in enumerate(units):
             ax.bar([i+(k-1)*w for i in range(len(names))], [R[n][ph][key]*scale for n in names], w*.92, color=c, hatch=h, edgecolor='white', lw=.3, label=lab)
         top = max(R[n][ph][u]*scale for n in names for u in ('MATRIX', 'HBM'))
@@ -87,8 +87,8 @@ def fig_vu():
     xs = [4, 8, 16]
     mx = [max(d[('all', n)]) for n in xs]; mn = [min(d[('all', n)]) for n in xs]
     ax.fill_between(range(3), mn, mx, color=ORANGE, alpha=.18, lw=0)
-    ax.plot(range(3), mx, color=ORANGE, marker='s', ls='--', label='Write back every result')
-    ax.plot([0], [max(d[('export', 4)])], color=BLUE, marker='o', ls='none', ms=5, label='Export only (MIDAS)')
+    ax.plot(range(3), mx, color=ORANGE, marker='s', ls='--', label='Write-back-all')
+    ax.plot([0], [max(d[('export', 4)])], color=BLUE, marker='o', ls='none', ms=5, label='Export-only return (MIDAS)')
     for i, n in enumerate(xs): ax.annotate(f'{area[("all", n)]:,} $\\mu$m$^2$', (i, mx[i]), textcoords='offset points', xytext=(4, 3), fontsize=5, color=INK)
     ax.annotate('5,799 $\\mu$m$^2$, 0%', (0, 0), textcoords='offset points', xytext=(6, 6), fontsize=5, color=INK)
     ax.set_xticks(range(3)); ax.set_xticklabels([str(n) for n in xs]); ax.set_xlabel('Return-queue entries'); ax.set_ylabel('VU slowdown (%)')
@@ -118,7 +118,7 @@ def fig_t2():
     ax.text(7.6, 3.42, 'bypass: next VU cycle', fontsize=4.7, color=BLUE, ha='center', va='center')
     ax.text(7.6, .6, 'only compiler-marked\nexports cross back', fontsize=4.7, color=ORANGE, ha='center', va='center')
     b = fig.add_axes([.31, .125, .36, .225])
-    rows = [('No local forwarding', nos['returned'], nos['duration_ps']), ('Write back all, 4 entries', al4['returned'], al4['duration_ps']), ('Export only, 4 entries', exp['returned'], exp['duration_ps'])]
+    rows = [('No local forwarding', nos['returned'], nos['duration_ps']), ('Write-back-all, 4 entries', al4['returned'], al4['duration_ps']), ('Export-only return, 4 entries', exp['returned'], exp['duration_ps'])]
     cols = ('#c9c8c2', ORANGE, BLUE)
     for i, ((_, ret, d), c) in enumerate(zip(rows, cols)): b.barh(2-i, d/1e6, .62, color=c)
     b.set_yticks([2, 1, 0]); b.set_yticklabels([f'{n}\n{ret:,} returns' for n, ret, _ in rows], fontsize=4.8, color=INK); b.tick_params(axis='y', length=0)
@@ -137,11 +137,11 @@ def fig_planner():
                             ('Decode, HBM-bound (C/M=0.40)', .40, AQUA, dict(marker='^', ls=':'))):
         T = [max(cm*s_, 1.) for s_ in st]
         ax.plot(T, r, color=c, label=lab, **sty)
-    ax.annotate('free points:\nno added latency', xy=(1.0, .705), xytext=(1.3, .64), fontsize=5.3, color=INK,
+    ax.annotate('Free points:\noverlap approximation', xy=(1.0, .705), xytext=(1.3, .64), fontsize=5.3, color=INK,
                 arrowprops=dict(arrowstyle='->', lw=.5, color=MUTED))
-    ax.annotate('steepest step first\n(largest $\\Delta E/\\Delta T$)', xy=(1.30, .958), xytext=(2.45, .60), fontsize=5.3, color=INK,
+    ax.annotate('Rank lowering steps\n(largest $\\Delta E/\\Delta T$)', xy=(1.30, .958), xytext=(1.55, .53), fontsize=5.3, color=INK,
                 arrowprops=dict(arrowstyle='->', lw=.5, color=MUTED))
-    ax.set_xlabel('Operator latency / HBM time $M$'); ax.set_ylabel('MAC energy / nominal'); ax.set_ylim(.5, 1.12); style(ax)
+    ax.set_xlabel('Block latency / HBM service time $M$'); ax.set_ylabel('Normalized MAC energy'); ax.set_ylim(.5, 1.12); style(ax)
     ax.legend(frameon=False, fontsize=5.0, loc='upper right'); fig.tight_layout(pad=.25); fig.savefig(FIG/'fig_planner.pdf'); plt.close(fig)
 
 
@@ -160,7 +160,7 @@ def fig_arch():
             for i, (d, c) in enumerate((('CTRL', '#dbe9fb'), ('DEC', '#dbe9fb'), ('MAC', '#3987e5'), ('OUT', '#dbe9fb'))):
                 box(ax, cx+1.0+i*.94, yy, .86, .62, d, c, fs=5)
         ax.text(cx+2.85, 2.2, '$\\vdots$', fontsize=6, color=MUTED, ha='center')
-        box(ax, cx+.2, .75, 1.4, 1.15, 'VU\nshadow slots,\nexport queue', '#fde3d6', fs=4.7)
+        box(ax, cx+.2, .75, 1.4, 1.15, 'VU\nshadow slots,\nreturn queue', '#fde3d6', fs=4.7)
         box(ax, cx+1.72, .75, 1.3, 1.15, 'Attention\nunit', '#fde3d6', fs=4.8)
         box(ax, cx+3.14, .75, 1.56, 1.15, 'MEM\nSRAM ctrl,\nDMA', '#fdf0cc', fs=4.8)
     ax.annotate('', xy=(5.1, 1.3), xytext=(4.9, 1.3), arrowprops=dict(arrowstyle='->', lw=.7, color=INK))
